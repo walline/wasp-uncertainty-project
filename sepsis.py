@@ -8,7 +8,7 @@ from sklearn.model_selection import GroupShuffleSplit
 from sngp import SNGP, SNGPClassifier
 from sngp_helpers import InternalSplit, evaluate, save_data
 
-C_TREATMENTS = ['input_4hourly', 'max_dose_vaso']
+C_TREATMENTS = ['max_dose_vaso']  # ['input_4hourly', 'max_dose_vaso']
 
 USE_SPECTRAL_NORM = True
 USE_GP_LAYER = True
@@ -19,7 +19,7 @@ TRAIN_SIZE = 0.8  # Ignored if PERFORM_OOD_EVALUATION = True
 RANDOM_STATE = 0
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-3
-N_EPOCHS = 200
+N_EPOCHS = 5
 BATCH_SIZE = 64
 ENCODER_HIDDEN_SIZE = 32
 ENCODER_N_LAYERS = 2
@@ -97,11 +97,6 @@ def main():
 
     sngp_clf = Pipeline(steps=[('preprocessor', preprocessor), ('classifier', sngp)])
     sngp_clf.fit(Xg_train, y_train)
-
-    y_test_probas = sngp_clf.predict_proba(Xg_test)
-    metrics = evaluate(y_test, y_test_probas)
-    print(metrics)
-
     save_data(sngp_clf, 'model.pickle')
 
 if __name__ == '__main__':
