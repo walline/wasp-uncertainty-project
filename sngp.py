@@ -41,8 +41,8 @@ class GP(nn.Module):
     def mc_averaging(self, logits, variances, n_samples):
         probas = []
         for l, v in zip(logits, variances):
-            samples = np.random.normal(l, torch.sqrt(v), (n_samples, 1))
-            probas += [torch.from_numpy(samples)]
+            samples = torch.normal(l, torch.sqrt(v), size=(n_samples, 1))
+            probas += [samples]
         probas = torch.cat(probas, dim=1)
         probas = F.softmax(probas, dim=1)
         probas = torch.mean(probas, dim=0)
@@ -169,8 +169,8 @@ class SNGPClassifier(NeuralNetClassifier):
         pass
 
     def on_train_end(self, net, X=None, y=None):
-        dataset = self.get_dataset(X)  # Use all training data in this step
-        for data in net.get_iterator(dataset, training=True):
+        dataset_train, _ = self.get_split_datasets(X, y)
+        for data in net.get_iterator(dataset_train, training=True):
             Xi, _ = unpack_data(data)
             net.module_.update_precisions(Xi)
         net.module_.compute_covariances()
