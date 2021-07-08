@@ -7,6 +7,8 @@ from skorch import NeuralNetClassifier
 from skorch.callbacks import EpochScoring
 from sklearn.metrics import accuracy_score
 from skorch.utils import to_numpy
+from torch.nn.parameter import Parameter
+from skorch.utils import to_tensor
 
 class GP(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, scale=2.0, s=0.001, m=0.999):
@@ -19,16 +21,20 @@ class GP(nn.Module):
         self.s = s
         self.m = m
 
-        self.W = torch.normal(mean=0.0, std=1.0, size=(hidden_size, input_size))
-        self.b = np.pi*torch.rand(hidden_size)
+        W = torch.normal(mean=0.0, std=1.0, size=(hidden_size, input_size))
+        self.register_buffer('W', W)
+
+        b = np.pi*torch.rand(hidden_size)
+        self.register_buffer('b', b)
         
         beta = np.random.multivariate_normal(np.zeros(hidden_size), np.eye(hidden_size), output_size).astype(np.float32)
-        self.beta = torch.tensor(beta, requires_grad=True)
+        self.beta = Parameter(torch.tensor(beta, requires_grad=True))
         
         self.C = np.sqrt(hidden_size/scale)
         
         I = np.eye(hidden_size).astype(np.float32)
-        self.precisions = torch.tensor(s*I).repeat(output_size, 1, 1)
+        precisions = torch.tensor(s*I).repeat(output_size, 1, 1)
+        self.register_buffer('precisions', precisions)
 
     def propagate_gp_layer(self, inputs):
         return self.C*torch.cos(F.linear(inputs, -self.W, self.b))
@@ -172,6 +178,7 @@ class SNGPClassifier(NeuralNetClassifier):
         dataset_train, _ = self.get_split_datasets(X, y)
         for data in net.get_iterator(dataset_train, training=True):
             Xi, _ = unpack_data(data)
+            Xi = to_tensor(Xi, device=self.device)
             net.module_.update_precisions(Xi)
         net.module_.compute_covariances()
 
@@ -192,6 +199,7 @@ class SNGPClassifier(NeuralNetClassifier):
         dataset = self.get_dataset(X)
         for data in self.get_iterator(dataset, training=False):
             Xi = unpack_data(data)[0]
+            Xi = to_tensor(Xi, device=self.device)
             yp = self.module_.predict_proba(Xi)
             y_probas.append(to_numpy(yp))
         y_probas = np.concatenate(y_probas, 0)
