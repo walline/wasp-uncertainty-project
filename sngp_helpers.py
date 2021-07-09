@@ -46,3 +46,39 @@ def evaluate(y, y_probas):
 def save_data(data, file):
     with open(file, 'wb') as f:
         pickle.dump(data, f)
+
+
+def compute_accuracy_ece(predictions, labels, n_bins):
+    # args:
+    #
+    # predictions: 'n_data x n_classes' array
+    # labels: 'n_data' array of integers
+    # n_bins: number of bins for ece evaluation
+    
+    n_data = labels.size
+
+    y = np.argmax(predictions, axis=-1)
+    p = np.amax(predictions, axis=-1)
+
+    accuracy = (y == labels).sum(dtype=np.float32) / n_data
+
+    ece = 0
+
+    bin_edges = np.linspace(0, 1, num=n_bins+1, endpoint=True)
+
+    for bin_ in range(n_bins):
+
+        l_bound, h_bound = bin_edges[bin_], bin_edges[bin_+1]
+        mask = (p > l_bound) & (p <= h_bound)
+
+        if mask.sum() == 0:
+            continue
+
+        bin_confidence = np.mean(p[mask])
+        bin_accuracy = (labels[mask] == y[mask]).sum(dtype=np.float32) / mask.sum()
+
+        ece += np.abs(bin_confidence-bin_accuracy)*mask.sum()
+
+    ece = ece/n_data
+
+    return accuracy, ece
