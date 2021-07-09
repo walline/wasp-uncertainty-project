@@ -91,6 +91,9 @@ class GP(nn.Module):
     def compute_covariances(self):
         self.covariances = torch.inverse(self.precisions)
 
+    def extra_repr(self):
+        return 'input_size={}, hidden_size={}, output_size={}'.format(self.input_size, self.hidden_size, self.output_size)
+
 class SNGP(nn.Module):
     def __init__(self, hidden_map, gp_input_size=128, gp_hidden_size=1024, gp_output_size=10, use_spectral_norm=False, use_gp_layer=True, **kwargs):
         super(SNGP, self).__init__()
