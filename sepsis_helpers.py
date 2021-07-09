@@ -5,6 +5,7 @@ import torch.nn as nn
 from scipy.stats import rankdata
 from torch.utils.data import Dataset
 from sklearn.pipeline import Pipeline
+from sklearn.model_selection import GroupShuffleSplit
 from sklearn.preprocessing import StandardScaler, FunctionTransformer
 from torch.nn.utils import spectral_norm
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
@@ -53,6 +54,43 @@ def discretize_treatments(treatments):
     discrete_nonzero_treatments = np.digitize(ranked_nonzero_treatments, bins=[0., 0.25, 0.5, 0.75, 1.], right=True)
     discrete_treatments[is_nonzero] = discrete_nonzero_treatments
     return discrete_treatments
+
+def get_train_test_data(c_treatments, c_group, c_features, perform_ood_evaluation, train_size=0.8, random_state=None):
+    sepsis_data = pd.read_csv('sepsis_data.csv')
+
+    groups = sepsis_data[c_group]
+
+    Y = sepsis_data[c_treatments]
+    Y_discrete = Y.apply(discretize_treatments, raw=True)
+    _, y = np.unique(Y_discrete, axis=0, return_inverse=True)
+    n_classes = len(set(y))
+
+    Yg = pd.concat([Y, groups], axis=1)
+    previous_doses = Yg.groupby(by=c_group).apply(func=lambda df: df.shift(periods=1).fillna(0))
+    previous_doses = previous_doses.drop(c_group, axis=1)
+    rename = [(c, c + '_prev') for c in previous_doses.columns]
+    previous_doses = previous_doses.rename(dict(rename), axis=1)
+
+    X = sepsis_data[c_features]
+    X = pd.concat([X, previous_doses], axis=1)
+    Xg = pd.concat([X, groups], axis=1)
+
+    if perform_ood_evaluation:
+        y_df = pd.DataFrame(y, columns=['y'])
+        yg_df = pd.concat([y_df, groups], axis=1)
+        ii_test = []
+        for _, data in yg_df.groupby(by=c_group):
+            targets = data.y.values
+            if np.max(targets) == n_classes-1:
+                ii_test += list(data.index)
+        ii_train = list(set(y_df.index)-set(ii_test))
+    else:
+        gss = GroupShuffleSplit(n_splits=1, train_size=train_size, random_state=random_state)
+        ii_train, ii_test = next(gss.split(X, y, groups))
+    Xg_train, y_train = Xg.iloc[ii_train], y[ii_train]
+    Xg_test, y_test = Xg.iloc[ii_test], y[ii_test]
+
+    return (Xg_train, y_train), (Xg_test, y_test)
 
 class SequentialDataset(Dataset):
     def __init__(self, X, y=None):
@@ -113,6 +151,13 @@ def flatten(t):
 class RNNMapping(nn.Module):
     def __init__(self, input_size, hidden_size, n_layers, use_residual_blocks=False, use_spectral_norm=False):
         super(RNNMapping, self).__init__()
+        
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.n_layers = n_layers
+        self.use_residual_blocks = use_residual_blocks
+        self.use_spectral_norm = use_spectral_norm
+
         if not use_residual_blocks:
             self.rnn = nn.RNN(input_size, hidden_size, n_layers, batch_first=True)
             if use_spectral_norm:
@@ -132,3 +177,6 @@ class RNNMapping(nn.Module):
         hidden_size = encodings.shape[-1]
         encodings = encodings.view(-1, hidden_size)
         return encodings[ii]
+
+    def extra_repr(self):
+        return 'input_size={}, hidden_size={}, n_layers={}, use_spectral_norm={}'.format(self.input_size, self.hidden_size, self.n_layers, self.use_spectral_norm)
