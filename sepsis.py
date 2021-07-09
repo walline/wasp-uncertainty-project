@@ -73,13 +73,16 @@ def main():
         device=device
     )
 
-    sngp_clf = Pipeline(steps=[('preprocessor', preprocessor), ('classifier', sngp)])
-    sngp_clf.fit(Xg_train, y_train)
+    pipeline = Pipeline(steps=[('preprocessor', preprocessor), ('classifier', sngp)])
+    pipeline.fit(Xg_train, y_train)
     
-    y_test_probas = sngp_clf.predict_proba(Xg_test)
-    print(evaluate(y_test, y_test_probas))
+    # Save the classifier
+    net = pipeline[-1]
+    net.save_params(f_params='model.pkl', f_optimizer='opt.pkl', f_history='history.json')
 
-    save_data(sngp_clf, 'model.pickle')
+    if not PERFORM_OOD_EVALUATION:
+        y_test_probas = pipeline.predict_proba(Xg_test)
+        print(evaluate(y_test, y_test_probas))
 
 if __name__ == '__main__':
     main()
