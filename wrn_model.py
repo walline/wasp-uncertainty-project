@@ -2,27 +2,28 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import functools
 
 def spectral_conv(*args, **kwargs):    
     return nn.utils.spectral_norm(nn.Conv2d(*args, **kwargs))
         
 class BasicBlock(nn.Module):
 
-    def __init__(self, in_planes, out_planes, stride):
+    def __init__(self, conv_func, in_planes, out_planes, stride):
 
         super(BasicBlock, self).__init__()
 
         self.bn1 = nn.BatchNorm2d(in_planes)
         self.relu1 = nn.ReLU(inplace=True)
-        self.conv1 = spectral_conv(in_planes, out_planes, kernel_size=3,
+        self.conv1 = conv_func(in_planes, out_planes, kernel_size=3,
                                    stride=stride, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(out_planes)
         self.relu2 = nn.ReLU(inplace=True)
-        self.conv2 = spectral_conv(out_planes, out_planes, kernel_size=3, stride=1,
+        self.conv2 = conv_func(out_planes, out_planes, kernel_size=3, stride=1,
                                    padding=1, bias=False)
         self.equalInOut = (in_planes == out_planes)
-        self.convShortcut = (not self.equalInOut) and spectral_conv(in_planes, out_planes,
-                                                                    kernel_size=1, stride=stride, padding=0, bias=False) or None
+        self.convShortcut = (not self.equalInOut) and conv_func(in_planes, out_planes,
+                                                                kernel_size=1, stride=stride, padding=0, bias=False) or None
 
 
     def forward(self, x):
@@ -39,14 +40,18 @@ class BasicBlock(nn.Module):
 
 class NetworkBlock(nn.Module):
 
-    def __init__(self, nb_layers, in_planes, out_planes, block, stride):
+    def __init__(self, conv_func, nb_layers, in_planes, out_planes, block, stride):
         super(NetworkBlock, self).__init__()
+        self.conv_func = conv_func
         self.layer = self._make_layer(block, in_planes, out_planes, nb_layers, stride)
 
     def _make_layer(self, block, in_planes, out_planes, nb_layers, stride):
         layers = []
         for i in range(int(nb_layers)):
-            layers.append(block(i == 0 and in_planes or out_planes, out_planes, i == 0 and stride or 1))
+            layers.append(block(self.conv_func,
+                                i == 0 and in_planes or out_planes,
+                                out_planes,
+                                i == 0 and stride or 1))            
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -55,21 +60,26 @@ class NetworkBlock(nn.Module):
 
 class WideResNet(nn.Module):
 
-    def __init__(self, depth=28, num_classes=10, widen_factor=2):
+    def __init__(self, use_spectral_norm=True, depth=28, widen_factor=2, **kwargs):
         super(WideResNet, self).__init__()
 
         nChannels = [16, 16*widen_factor, 32*widen_factor, 64*widen_factor]
         assert((depth - 4) % 6 == 0)
         n = (depth - 4) / 6
 
+        if use_spectral_norm:
+            conv_func = spectral_conv
+        else:
+            conv_func = nn.Conv2d
+        
         block = BasicBlock
 
-        self.conv1 = spectral_conv(3, nChannels[0], kernel_size=3,
+        self.conv1 = conv_func(3, nChannels[0], kernel_size=3,
                                    stride=1, padding=1, bias=False)
 
-        self.block1 = NetworkBlock(n, nChannels[0], nChannels[1], block, 1)
-        self.block2 = NetworkBlock(n, nChannels[1], nChannels[2], block, 2)
-        self.block3 = NetworkBlock(n, nChannels[2], nChannels[3], block, 2)
+        self.block1 = NetworkBlock(conv_func, n, nChannels[0], nChannels[1], block, 1)
+        self.block2 = NetworkBlock(conv_func, n, nChannels[1], nChannels[2], block, 2)
+        self.block3 = NetworkBlock(conv_func, n, nChannels[2], nChannels[3], block, 2)
         self.bn1 = nn.BatchNorm2d(nChannels[3])
         self.relu = nn.ReLU(inplace=True)
 
