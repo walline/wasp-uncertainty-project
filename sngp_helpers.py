@@ -3,7 +3,6 @@ import pickle
 import numpy as np
 from sklearn.model_selection import ShuffleSplit
 from sklearn.metrics import accuracy_score, log_loss
-from netcal.metrics import ECE
 
 class InternalSplit:
     def __init__(self, train_size=0.8, random_state=None):
@@ -20,10 +19,9 @@ class InternalSplit:
         return dataset_train, dataset_valid
 
 def sce(y_probas, y_one_hot, n_bins=10):
-    ece = ECE(n_bins)
     sce = 0
     for yp, y in zip(y_probas.T, y_one_hot.T):
-        sce += ece.measure(yp, y)
+        sce += ece(yp, y, n_bins)
     return sce / y_probas.shape[1]
 
 def evaluate(y, y_probas):
@@ -33,12 +31,10 @@ def evaluate(y, y_probas):
     n_classes = y_probas.shape[1]
     y_one_hot = np.eye(n_classes)[y]
 
-    ece = ECE(bins=10)
-
     metrics = {}
     metrics['accuracy'] = accuracy_score(y, y_preds)
     metrics['log_loss'] = log_loss(y, y_probas)
-    metrics['ece'] = ece.measure(y_probas, y_one_hot)
+    metrics['ece'] = ece(y_probas, y_one_hot)
     metrics['sce'] = sce(y_probas, y_one_hot)
 
     return metrics
@@ -47,6 +43,41 @@ def save_data(data, file):
     with open(file, 'wb') as f:
         pickle.dump(data, f)
 
+def ece(y_probas, y, n_bins=10):  # Added this function for computing SCE
+    '''
+    Parameters
+    ----------
+    y_probas : NumPy array of shape (n_samples, n_classes) or (n_samples,)
+        Predicted probabilities.
+    y : NumPy array of shape (n_samples, n_classes) or (n_samples,)
+        True labels. Either as label vector (1-D) or as one-hot encoded ground truth array (2-D).
+    '''    
+    if y_probas.ndim == 2:
+        jj = y_probas.argmax(axis=-1)
+        if y.ndim == 2:
+            y = np.take_along_axis(y, np.expand_dims(jj, axis=-1), axis=-1).squeeze(axis=-1)
+        elif not np.array_equal(y, y.astype(bool)):
+            assert set(y) == set(jj), 'The labels must range from 0 to n_classes-1.' 
+            y = np.array([yi == j for yi, j in zip(y, jj)], dtype=bool)
+        y_probas = np.take_along_axis(y_probas, np.expand_dims(jj, axis=-1), axis=-1).squeeze(axis=-1)
+    else:
+        assert y.ndim == 1 and np.array_equal(y, y.astype(bool))
+        
+    bins = np.linspace(0, 1, n_bins+1)
+    bin_indices = np.digitize(y_probas, bins, right=False)  # Assume no probabilities = 1
+
+    ece = 0
+    for i in range(1, n_bins+1):
+        bin_mask = bin_indices == i
+        if bin_mask.sum() == 0:
+            continue
+        y_probas_bin = y_probas[bin_mask]
+        conf = np.mean(y_probas_bin)
+        y_bin = y[bin_mask]     
+        acc = np.mean(y_bin)
+        ece += len(y_bin)*np.abs(acc-conf)
+
+    return ece/len(y_probas)
 
 def compute_accuracy_ece(predictions, labels, n_bins):
     # args:
