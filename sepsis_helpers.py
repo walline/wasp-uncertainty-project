@@ -38,9 +38,10 @@ C_SCALE += ['elixhauser']
 scale_tf = Pipeline(
         steps=[('scale', StandardScaler())]
     )
+def log_func(x): return np.log(0.1+x)
 log_scale_tf = Pipeline(
     steps=[
-        ('logaritmize', FunctionTransformer(func=lambda x: np.log(0.1+x))),
+        ('logaritmize', FunctionTransformer(func=log_func)),
         ('scale', StandardScaler())
     ]
 )
