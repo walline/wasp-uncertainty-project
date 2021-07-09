@@ -1,4 +1,5 @@
 import torch
+import pickle
 import pandas as pd
 import numpy as np
 from sepsis_helpers import *
@@ -78,7 +79,8 @@ def main():
     
     # Save the classifier
     net = pipeline[-1]
-    net.save_params(f_params='model.pkl', f_optimizer='opt.pkl', f_history='history.json')
+    with open('net.pkl', 'wb') as f:
+        pickle.dump(net, f)
 
     if not PERFORM_OOD_EVALUATION:
         y_test_probas = pipeline.predict_proba(Xg_test)
