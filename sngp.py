@@ -86,7 +86,7 @@ class GP(nn.Module):
             temp = preds[:, k]*(1-preds[:, k])
             temp = temp.unsqueeze(1)
             update = (temp[:, :, None]*kernels).sum(dim=0)  # Sum over batch
-            self.precisions[k] = (1-self.m)*self.precisions[k] + self.m*update
+            self.precisions[k] = self.m*self.precisions[k] + (1-self.m)*update
 
     def compute_covariances(self):
         self.covariances = torch.inverse(self.precisions)

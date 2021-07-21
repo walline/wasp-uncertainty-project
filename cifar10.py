@@ -52,13 +52,7 @@ def main(*args):
     
     train_imgs, train_labels, test_imgs, test_labels = load_data()
 
-    print(train_imgs.shape)
-    print(len(train_labels))
-    print(test_imgs.shape)
-    print(len(test_labels))
-    
     cifar_shape = tuple(train_imgs.shape[1:])
-    print(cifar_shape)
     
     n_classes = 10
     
@@ -69,11 +63,6 @@ def main(*args):
     
     WRN = WideResNet
     hidden_out_shape = get_output_shape(WRN(depth=depth, widen_factor=widen_factor), cifar_shape)
-
-    print(WRN)
-    print(hidden_out_shape)
-
-    print(device)
     
     sngp = SNGPClassifier(
         module=SNGP,
@@ -82,7 +71,7 @@ def main(*args):
         module__gp_hidden_size=1024,
         module__gp_output_size=n_classes,
         module__use_spectral_norm=True,
-        module__use_gp_layer=True,
+        module__use_gp_layer=FLAGS.gp,
         module__input_size=cifar_shape,
         module__depth=depth,
         module__widen_factor=widen_factor,
@@ -106,6 +95,7 @@ if __name__ == "__main__":
     flags.DEFINE_float("wd", 0.0005, "Weight decay")
     flags.DEFINE_integer("batch", 64, "Batch size")
     flags.DEFINE_integer("epochs", 10, "Number of training epochs")
+    flags.DEFINE_boolean("gp", True, "Use GP as output layer")
     
     app.run(main)
     
