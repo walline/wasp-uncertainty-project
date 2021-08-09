@@ -10,6 +10,7 @@ from skorch.utils import to_numpy
 from torch.nn.parameter import Parameter
 from skorch.utils import to_tensor
 
+        
 class GP(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, scale=2.0, s=0.001, m=0.999):
         super(GP, self).__init__()
@@ -24,13 +25,15 @@ class GP(nn.Module):
         W = torch.normal(mean=0.0, std=1.0, size=(hidden_size, input_size))
         self.register_buffer('W', W)
 
-        b = np.pi*torch.rand(hidden_size)
+        b = 2*np.pi*torch.rand(hidden_size)
         self.register_buffer('b', b)
         
-        beta = np.random.multivariate_normal(np.zeros(hidden_size), np.eye(hidden_size), output_size).astype(np.float32)
+        beta = np.random.multivariate_normal(np.zeros(hidden_size),
+                                             np.eye(hidden_size), output_size).astype(np.float32)
+        
         self.beta = Parameter(torch.tensor(beta, requires_grad=True))
         
-        self.C = np.sqrt(hidden_size/scale)
+        self.C = np.sqrt(scale/hidden_size)
         
         I = np.eye(hidden_size).astype(np.float32)
         precisions = torch.tensor(s*I).repeat(output_size, 1, 1)
@@ -55,7 +58,7 @@ class GP(nn.Module):
         return probas
 
     def predict_proba(self, inputs, n_mc_samples=10):
-        logits, Phi = self.forward(inputs)
+        logits, Phi = self(inputs)
         if hasattr(self, 'covariances'):  # Assuming model is fully trained
             batch_size = Phi.shape[0]
             Phi = Phi.unsqueeze(1)  # (batch_size, 1, hidden_size)
@@ -77,16 +80,28 @@ class GP(nn.Module):
             return F.softmax(logits, dim=1)
 
     def update_precisions(self, inputs):
-        logits, Phi = self.forward(inputs)
+        logits, Phi = self(inputs)
         preds = F.softmax(logits, dim=1)
         Phi = Phi.view(-1, self.hidden_size, 1)  # (batch_size, hidden_size, 1)
         PhiT = Phi.permute(0, 2, 1)  # (batch_size, 1, hidden_size)
-        kernels = torch.matmul(Phi, PhiT)
+        kernels = torch.bmm(Phi, PhiT)
         for k in range(self.output_size):
             temp = preds[:, k]*(1-preds[:, k])
             temp = temp.unsqueeze(1)
             update = (temp[:, :, None]*kernels).sum(dim=0)  # Sum over batch
             self.precisions[k] = self.m*self.precisions[k] + (1-self.m)*update
+
+    def compute_full_precisions(self, logits, Phi, sum_batch=500):
+        size = logits.shape[0]
+        preds = F.softmax(logits, dim=1)
+        Phi = Phi.view(-1, self.hidden_size, 1)
+        PhiT = Phi.permute(0, 2, 1)
+        for k in range(self.output_size):
+            temp = preds[:,k]*(1-preds[:,k])
+            self.precisions[k] = torch.eye(self.hidden_size)
+            for i in range(0, size, sum_batch):
+                kernels = torch.bmm(Phi[i:i+sum_batch,:,:], PhiT[i:i+sum_batch,:,:])
+                self.precisions[k] += (temp[i:i+sum_batch, None, None]*kernels).sum(0)
 
     def compute_covariances(self):
         self.covariances = torch.inverse(self.precisions)
@@ -95,20 +110,27 @@ class GP(nn.Module):
         return 'input_size={}, hidden_size={}, output_size={}'.format(self.input_size, self.hidden_size, self.output_size)
 
 class SNGP(nn.Module):
-    def __init__(self, hidden_map, gp_input_size=128, gp_hidden_size=1024, gp_output_size=10, use_spectral_norm=False, use_gp_layer=True, **kwargs):
+    def __init__(self, hidden_map, gp_input_size=128, gp_hidden_size=1024, gp_output_size=10, gp_scale=2,
+                 gp_s=0.001, gp_m=0.999, use_spectral_norm=False, use_gp_layer=True, **kwargs):
         super(SNGP, self).__init__()
         
         self.hidden_map = hidden_map(use_spectral_norm=use_spectral_norm, **kwargs)
 
         self.use_gp_layer = use_gp_layer
         if use_gp_layer:
-            self.output_layer = GP(gp_input_size, gp_hidden_size, gp_output_size)  # Should maybe pass scale, s and m here
+            self.output_layer = GP(gp_input_size, gp_hidden_size, gp_output_size,
+                                   scale=gp_scale, s=gp_s, m=gp_m)
         else:
             self.output_layer = nn.Linear(gp_input_size, gp_output_size)
 
+
     def forward(self, inputs):
         encodings = self.hidden_map(inputs)
-        return self.output_layer(encodings)
+        if self.use_gp_layer:
+            logits, _ = self.output_layer(encodings)
+            return logits
+        else:
+            return self.output_layer(encodings)
 
     def update_precisions(self, inputs):
         if self.use_gp_layer:
@@ -130,6 +152,41 @@ class SNGP(nn.Module):
             else:
                 logits = self.output_layer(encodings)
                 return F.softmax(logits, dim=1)
+
+    def mean_predictions(self, inputs):
+        # for debugging
+        with torch.no_grad():
+            self.eval()
+            encodings = self.hidden_map(inputs)
+            if self.use_gp_layer:
+                logits, _ = self.output_layer(encodings)
+                probas = F.softmax(logits, dim=1)
+                return probas
+            else:
+                logits = self.output_layer(encodings)
+                probas = F.softmax(logits, dim=1)
+                return probas
+
+    def compute_full_precisions(self, data_iterator, device):
+        if self.use_gp_layer:
+            with torch.no_grad():
+                self.eval()
+                logits = []
+                Phi = []
+                for data in data_iterator:
+                    images = data[0].to(device)
+                    encodings = self.hidden_map(images)
+                    l, p = self.output_layer(encodings)
+                    logits += [l]
+                    Phi += [p]
+
+                logits = torch.cat(logits, axis=0)
+                Phi = torch.cat(Phi, axis=0)
+
+                self.output_layer.compute_full_precisions(logits, Phi)
+                
+            
+                
 
 class SNGPClassifier(NeuralNetClassifier):
     def __init__(self, **kwargs):
@@ -185,6 +242,7 @@ class SNGPClassifier(NeuralNetClassifier):
             net.module_.update_precisions(Xi)
         net.module_.compute_covariances()
 
+
     def run_single_epoch(self, dataset, training, prefix, step_fn, **fit_params):
         is_placeholder_y = uses_placeholder_y(dataset)
         batch_count = 0
@@ -214,4 +272,23 @@ class SNGPClassifier(NeuralNetClassifier):
 
     def score(self, X, y):
         yp = self.predict(X)
+        return accuracy_score(y, yp)
+
+    def predict_mean(self, X):
+        # for debugging
+        y_probas = []
+        dataset = self.get_dataset(X)
+        for data in self.get_iterator(dataset, training=False):
+            Xi = unpack_data(data)[0]
+            Xi = to_tensor(Xi, device=self.device)
+            yp = self.module_.mean_predictions(Xi)
+            y_probas.append(to_numpy(yp))
+        y_probas = np.concatenate(y_probas, 0)
+        return y_probas
+
+    
+    def mean_prediction_score(self, X, y):
+        # for debugging
+        yp = self.predict_mean(X)
+        yp = yp.argmax(axis=1)
         return accuracy_score(y, yp)

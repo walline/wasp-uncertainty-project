@@ -85,7 +85,9 @@ def main(*args):
     )
 
     sngp.fit(train_imgs, train_labels)
+    
     print(sngp.score(test_imgs, test_labels))
+    print(sngp.mean_prediction_score(test_imgs, test_labels))
 
 
 
