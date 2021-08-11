@@ -236,12 +236,13 @@ class SNGPClassifier(NeuralNetClassifier):
 
     def on_train_end(self, net, X=None, y=None):
         dataset_train, _ = self.get_split_datasets(X, y)
-        for data in net.get_iterator(dataset_train, training=True):
-            Xi, _ = unpack_data(data)
-            Xi = to_tensor(Xi, device=self.device)
-            net.module_.update_precisions(Xi)
+        # for data in net.get_iterator(dataset_train, training=True):
+        #    Xi, _ = unpack_data(data)
+        #    Xi = to_tensor(Xi, device=self.device)
+        #    net.module_.update_precisions(Xi)
+        iterator_train = net.get_iterator(dataset_train, training=True)
+        net.module_.compute_full_precisions(iterator_train, self.device)
         net.module_.compute_covariances()
-
 
     def run_single_epoch(self, dataset, training, prefix, step_fn, **fit_params):
         is_placeholder_y = uses_placeholder_y(dataset)
