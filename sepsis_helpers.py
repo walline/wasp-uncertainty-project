@@ -42,7 +42,7 @@ scale_tf = Pipeline(
 def log_func(x): return np.log(0.1+x)
 log_scale_tf = Pipeline(
     steps=[
-        ('logaritmize', FunctionTransformer(func=log_func)),
+        ('logaritmize', FunctionTransformer(func=log_func, validate=False)),
         ('scale', StandardScaler())
     ]
 )
